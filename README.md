@@ -24,7 +24,9 @@ network calls, spawns no subprocesses of its own, and keeps no state.
 
 It also never fails loudly. A panic message or an error string would be
 rendered straight into the UI, so malformed or partial input produces a partial
-line instead of an error.
+line instead of an error. The one input that prints nothing is empty stdin:
+Claude Code probes the status line with it at session start, and a fallback
+rendered there would flash a half-drawn line before the real data arrives.
 
 ## Install
 
@@ -152,8 +154,9 @@ all. Set `KLAUDE_STATUS_LOG` in the `env` block of `settings.json`:
 
 Every run appends a timestamp, pid, input and output sizes, cwd and the
 rendered line. That separates the three failure modes: no lines at all (the
-command is never invoked, usually a wrong path), `out=0B` (it runs but produces
-nothing), or a sensible line (it works and the problem is elsewhere). Remove
+command is never invoked, usually a wrong path), `out=0B` on non-empty input
+(it runs but produces nothing; `in=0B out=0B` is just the startup probe and is
+normal), or a sensible line (it works and the problem is elsewhere). Remove
 the variable afterwards, it writes on every run.
 
 To reproduce what Claude Code does, without your shell profile:

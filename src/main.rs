@@ -5,7 +5,8 @@
 //!
 //! * **Never crash.** The status line runs after every turn; a panic message or
 //!   an error string would be rendered straight into the UI. Partial input
-//!   produces a partial line, not an error.
+//!   produces a partial line, not an error. Completely empty stdin - Claude
+//!   Code's startup probe - prints nothing at all.
 //! * **No subprocesses, no network.** Everything comes from the input JSON or
 //!   is read straight out of `.git` with gitoxide.
 //! * **No state.** The same input always produces the same output.
@@ -34,12 +35,25 @@ fn main() {
 
     let mut raw = String::new();
     let _ = std::io::stdin().read_to_string(&mut raw);
-    let input: Input = serde_json::from_str(&raw).unwrap_or_default();
 
     let cfg = Config::load();
-    let line = build(&input, &cfg, cfg.width_limit(terminal_width()));
-    log_run(&raw, &line);
-    println!("{line}");
+    let line = respond(&raw, &cfg, cfg.width_limit(terminal_width()));
+    log_run(&raw, line.as_deref().unwrap_or(""));
+    if let Some(line) = line {
+        println!("{line}");
+    }
+}
+
+/// Raw stdin to printable output, or `None` for no output at all: Claude Code
+/// probes the status line with empty stdin when a session starts, and a
+/// fallback rendered there flashes a half-drawn line for the first seconds of
+/// every session. Input with content, however broken, still always renders.
+fn respond(raw: &str, cfg: &Config, width: Option<usize>) -> Option<String> {
+    if raw.trim().is_empty() {
+        return None;
+    }
+    let input: Input = serde_json::from_str(raw).unwrap_or_default();
+    Some(build(&input, cfg, width))
 }
 
 /// Diagnostic log: `KLAUDE_STATUS_LOG=/path` records every run.
@@ -255,9 +269,16 @@ mod tests {
     }
 
     #[test]
+    fn empty_stdin_prints_nothing_at_all() {
+        // The startup probe: Claude Code runs the command once with empty
+        // stdin before it has anything to report.
+        assert_eq!(respond("", &plain_cfg(), None), None);
+        assert_eq!(respond(" \n\t", &plain_cfg(), None), None);
+    }
+
+    #[test]
     fn garbage_input_neither_crashes_nor_prints_an_empty_line() {
-        let input: Input = serde_json::from_str("not json").unwrap_or_default();
-        let out = build(&input, &plain_cfg(), None);
+        let out = respond("not json", &plain_cfg(), None).expect("content must render");
         // An empty line would look like a broken status line, so the fallback
         // is the working directory.
         assert!(!out.is_empty());
