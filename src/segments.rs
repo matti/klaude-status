@@ -40,38 +40,113 @@ impl Ctx<'_> {
         }
     }
 
-    /// Where we are. The project root is emphasized and the path inside it is
-    /// dimmed, because the root says *which* project and the rest only says
+    /// Where we are. The repository root is emphasized and everything around it
+    /// is dimmed, because the root says *which* project and the rest only says
     /// *where* inside it.
     fn path(&self) -> Option<String> {
+        self.path_variants().into_iter().next()
+    }
+
+    /// The path from the full form down to the shortest one that still names
+    /// the repository and the current directory. `render` picks the widest that
+    /// fits:
+    ///
+    /// ```text
+    /// ~/dev/acme/data-pipeline/.worktrees/fix-retries +shared-schemas
+    /// …data-pipeline/.worktrees/fix-retries +shared-schemas
+    /// …data-pipeline/…/fix-retries +shared-schemas
+    /// …data-pipeline/…/fix-retries +1d
+    /// ```
+    ///
+    /// Every collapsed path is offered with the added directories named first
+    /// and counted afterwards, so the names are what a wide terminal loses last
+    /// and a narrow one gives up before it starts dropping whole segments.
+    pub fn path_variants(&self) -> Vec<String> {
         let cwd = self.input.current_dir();
         if cwd.is_empty() {
-            return None;
+            return Vec::new();
         }
 
-        let mut out = match self.input.project_dir().and_then(|p| relative_to(cwd, p)) {
-            Some((project, rel)) => {
-                let mut s = self.p.bold(basename(project));
-                if !rel.is_empty() {
-                    s.push_str(&self.p.dim(&format!("/{rel}")));
+        let mut out = Vec::new();
+        for suffix in self.added_dirs() {
+            let mut push = |lead: &str, name: &str, rest: String| {
+                let s = format!(
+                    "{}{}{}{}",
+                    self.p.dim(lead),
+                    self.p.bold(name),
+                    self.p.dim(&rest),
+                    suffix
+                );
+                if out.last() != Some(&s) {
+                    out.push(s);
                 }
-                s
-            }
-            None => self.p.bold(&shorten_path(cwd)),
-        };
+            };
 
-        // Added directories (`/add-dir`) widen what Claude can see, so their
-        // existence belongs on the status line.
-        let added = self
+            match self.root().and_then(|root| relative_to(cwd, root)) {
+                Some((root, rel)) => {
+                    let shown = tilde(root);
+                    let name = basename(&shown).to_string();
+                    let lead = &shown[..shown.len() - name.len()];
+                    let rest = if rel.is_empty() {
+                        String::new()
+                    } else {
+                        format!("/{rel}")
+                    };
+                    push(lead, &name, rest.clone());
+                    push("\u{2026}", &name, rest);
+                    if !rel.is_empty() {
+                        push("\u{2026}", &name, format!("/\u{2026}/{}", basename(rel)));
+                    }
+                }
+                None => {
+                    let shown = tilde(cwd);
+                    let name = basename(&shown).to_string();
+                    let lead = &shown[..shown.len() - name.len()];
+                    push(lead, &name, String::new());
+                    push("\u{2026}/", &name, String::new());
+                }
+            }
+        }
+        out
+    }
+
+    /// Suffixes describing the directories `/add-dir` brought in, longest form
+    /// first. Naming them answers *which* directory, which the count alone
+    /// never did; past two the names cost more width than they are worth, so
+    /// only the count is offered.
+    ///
+    /// Always ends with the shortest form, and with no added directories that
+    /// is the empty suffix: the path renders exactly as it would without them.
+    fn added_dirs(&self) -> Vec<String> {
+        let dirs = self
             .input
             .workspace
             .as_ref()
-            .map(|w| w.added_dirs.len())
-            .unwrap_or(0);
-        if added > 0 {
-            out.push_str(&self.p.dim(&format!(" +{added}d")));
+            .map(|w| w.added_dirs.as_slice())
+            .unwrap_or_default();
+        if dirs.is_empty() {
+            return vec![String::new()];
         }
-        Some(out)
+        let mut out = Vec::new();
+        if dirs.len() <= 2 {
+            let names = dirs
+                .iter()
+                .map(|d| format!("+{}", basename(d)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            out.push(self.p.dim(&format!(" {names}")));
+        }
+        out.push(self.p.dim(&format!(" +{}d", dirs.len())));
+        out
+    }
+
+    /// The directory that carries the project's name: the repository's main
+    /// working tree, or the project directory when there is no git.
+    fn root(&self) -> Option<&str> {
+        self.git
+            .as_ref()
+            .and_then(|g| g.root.as_deref())
+            .or_else(|| self.input.project_dir())
     }
 
     fn git_status(&self) -> Option<String> {
@@ -372,20 +447,13 @@ fn basename(path: &str) -> &str {
         .unwrap_or(path)
 }
 
-/// Shorten an absolute path: home becomes `~`, and a long path collapses to its
-/// last two components.
-fn shorten_path(path: &str) -> String {
+/// Home becomes `~`: it is shorter and says the same thing.
+fn tilde(path: &str) -> String {
     let home = std::env::var("HOME").unwrap_or_default();
-    let shown = if !home.is_empty() && path.starts_with(&home) {
-        format!("~{}", &path[home.len()..])
-    } else {
-        path.to_string()
-    };
-    let parts: Vec<&str> = shown.split('/').filter(|s| !s.is_empty()).collect();
-    if parts.len() <= 3 {
-        return shown;
+    match path.strip_prefix(&home) {
+        Some(rest) if !home.is_empty() => format!("~{rest}"),
+        _ => path.to_string(),
     }
-    format!("\u{2026}/{}", parts[parts.len() - 2..].join("/"))
 }
 
 /// `"Opus 5 (1M context)"` -> `("Opus 5", true)`.
@@ -502,13 +570,109 @@ mod tests {
         assert_eq!(relative_to("/a/bc", "/a/b"), None);
     }
 
+    /// The path collapses toward "repository name + last directory" instead of
+    /// losing the repository, which is the part that says where we are.
     #[test]
-    fn a_long_path_collapses() {
+    fn the_path_collapses_around_the_repo_name() {
+        let input: Input = serde_json::from_str(
+            r#"{"workspace":{"current_dir":"/home/u/dev/acme/data-pipeline/.worktrees/smoke",
+                             "project_dir":"/home/u/dev/acme/data-pipeline"}}"#,
+        )
+        .unwrap();
+        let cfg = Config::default();
+        let ctx = Ctx {
+            input: &input,
+            git: None,
+            p: Painter::new(false),
+            cfg: &cfg,
+            now: 0,
+        };
         assert_eq!(
-            shorten_path("/Users/you/dev/klaude-status"),
-            "…/dev/klaude-status"
+            ctx.path_variants(),
+            vec![
+                "/home/u/dev/acme/data-pipeline/.worktrees/smoke",
+                "…data-pipeline/.worktrees/smoke",
+                "…data-pipeline/…/smoke",
+            ]
         );
-        assert_eq!(shorten_path("/a/b"), "/a/b");
+    }
+
+    fn variants(json: &str) -> Vec<String> {
+        let input: Input = serde_json::from_str(json).unwrap();
+        let cfg = Config::default();
+        let ctx = Ctx {
+            input: &input,
+            git: None,
+            p: Painter::new(false),
+            cfg: &cfg,
+            now: 0,
+        };
+        ctx.path_variants()
+    }
+
+    /// An added directory is named while there is room for it, and collapses to
+    /// the bare count before the path itself starts losing components.
+    #[test]
+    fn an_added_directory_is_named_first_and_counted_after() {
+        assert_eq!(
+            variants(
+                r#"{"workspace":{"current_dir":"/home/u/dev/acme/data-pipeline",
+                                 "project_dir":"/home/u/dev/acme/data-pipeline",
+                                 "added_dirs":["/home/u/dev/acme/shared-schemas"]}}"#
+            ),
+            vec![
+                "/home/u/dev/acme/data-pipeline +shared-schemas",
+                "…data-pipeline +shared-schemas",
+                "/home/u/dev/acme/data-pipeline +1d",
+                "…data-pipeline +1d",
+            ]
+        );
+    }
+
+    #[test]
+    fn two_added_directories_are_both_named() {
+        let out = variants(
+            r#"{"workspace":{"current_dir":"/home/u/dev/acme/data-pipeline",
+                             "project_dir":"/home/u/dev/acme/data-pipeline",
+                             "added_dirs":["/home/u/dev/acme/shared-schemas","/srv/vendor-docs"]}}"#,
+        );
+        assert_eq!(
+            out.first().unwrap(),
+            "/home/u/dev/acme/data-pipeline +shared-schemas +vendor-docs"
+        );
+        assert_eq!(out.last().unwrap(), "…data-pipeline +2d");
+    }
+
+    /// Three names would cost more width than they pay back, so only the count
+    /// is offered and no variant tries to name them.
+    #[test]
+    fn many_added_directories_stay_a_count() {
+        let out = variants(
+            r#"{"workspace":{"current_dir":"/home/u/dev/acme/data-pipeline",
+                             "project_dir":"/home/u/dev/acme/data-pipeline",
+                             "added_dirs":["/a/one","/b/two","/c/three"]}}"#,
+        );
+        assert_eq!(
+            out,
+            vec!["/home/u/dev/acme/data-pipeline +3d", "…data-pipeline +3d"]
+        );
+    }
+
+    /// Without added directories the path is what it always was: no stray
+    /// suffix, and no duplicate variants for `render` to walk through.
+    #[test]
+    fn no_added_directories_leaves_the_path_alone() {
+        assert_eq!(
+            variants(
+                r#"{"workspace":{"current_dir":"/home/u/dev/acme/data-pipeline/charts",
+                                 "project_dir":"/home/u/dev/acme/data-pipeline"}}"#
+            ),
+            vec![
+                "/home/u/dev/acme/data-pipeline/charts",
+                "…data-pipeline/charts",
+                "…data-pipeline/…/charts",
+            ]
+        );
     }
 
     #[test]
