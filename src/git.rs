@@ -44,6 +44,10 @@ pub struct GitInfo {
     /// The repository's main working tree. For a linked worktree this is still
     /// the original checkout, whose name identifies the project.
     pub root: Option<String>,
+    /// The working tree the directory actually sits in. Same as `root` in the
+    /// main checkout; for a linked worktree that lives *outside* the main one,
+    /// this is the only git directory that still contains the session.
+    pub workdir: Option<String>,
 }
 
 /// Collect git state for a directory. `None` if the directory is not in a repo.
@@ -52,6 +56,10 @@ pub fn collect(dir: &Path, dirty_budget: Option<Duration>) -> Option<GitInfo> {
     let mut info = GitInfo {
         dirty: dirty_state(&repo, dirty_budget),
         root: main_worktree(&repo),
+        workdir: repo
+            .workdir()
+            .and_then(|p| gix::path::normalize(p.into(), Path::new("/")))
+            .map(|p| p.to_string_lossy().into_owned()),
         ..Default::default()
     };
 

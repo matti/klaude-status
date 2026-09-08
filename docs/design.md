@@ -166,8 +166,12 @@ than losing its head. The forms, widest first:
 
 The emphasized part is the repository's **main** working tree, taken from
 `common_dir`, so a session in a linked worktree still shows which project it
-belongs to rather than the worktree's own name. Without git, `project_dir` is
-used instead.
+belongs to rather than the worktree's own name. That only works when the
+worktree lives *inside* the main checkout. A root has to contain the current
+directory, otherwise the path never passes through it and there is nothing to
+collapse around; the candidates are tried in order: main working tree,
+`project_dir`, and finally the worktree the session sits in. Without git,
+`project_dir` alone is used.
 
 The terminal width is probed from **stderr**, because stdout is a pipe. Failing
 that, `COLUMNS`. As a last resort no limit is applied at all, and Claude Code
