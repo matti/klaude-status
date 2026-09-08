@@ -11,8 +11,10 @@ constraints, and they shape the whole implementation:
    milliseconds in a large repo. A Rust binary with gitoxide does the same work
    in single-digit milliseconds in a normal repo, process start included.
 2. **No crashing.** A panic message or an error string goes straight into the
-   UI. Every input field is an `Option`, every parse is `unwrap_or_default`,
-   and nothing is indexed without a bounds check.
+   UI. Every conditional input field is an `Option`, every field falls back
+   to its default on a `null` or a wrong type (`input.rs:lenient`), every
+   parse is `unwrap_or_default`, and nothing is indexed without a bounds
+   check.
 3. **No side effects.** No network, no cache files, no state. The same input
    always produces the same output, which is what makes the output testable.
 
@@ -46,8 +48,9 @@ each other:
    `resets_at` is in unix seconds).
 
 Both are worth repeating after a Claude Code upgrade: unknown fields are
-ignored safely, but they will not appear in the status line until they are
-added to `src/input.rs`.
+ignored safely, and a field whose shape changed degrades to its default on
+its own, but neither shows up correctly in the status line until
+`src/input.rs` is updated.
 
 ## Fields as of 2.1.226
 
