@@ -28,7 +28,10 @@ fn exits_cleanly_when_stdout_reader_closes_first() {
     let output = run_with_closed_stdout(&[], r#"{"cwd":"/tmp","model":{"display_name":"Fable"}}"#);
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.contains("panicked"), "panicked on broken pipe: {stderr}");
+    assert!(
+        !stderr.contains("panicked"),
+        "panicked on broken pipe: {stderr}"
+    );
     assert!(output.status.success(), "exit status: {}", output.status);
 }
 
@@ -37,6 +40,9 @@ fn demo_exits_cleanly_when_stdout_reader_closes_first() {
     let output = run_with_closed_stdout(&["--demo"], "");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.contains("panicked"), "panicked on broken pipe: {stderr}");
+    assert!(
+        !stderr.contains("panicked"),
+        "panicked on broken pipe: {stderr}"
+    );
     assert!(output.status.success(), "exit status: {}", output.status);
 }
