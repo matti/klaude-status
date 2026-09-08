@@ -4,6 +4,10 @@
 #   ./install.sh              # installs into ~/.local/bin
 #   PREFIX=/usr/local ./install.sh   # installs into /usr/local/bin
 #
+# The statusLine setting goes into the settings.json of the active Claude Code
+# profile: $CLAUDE_CONFIG_DIR/settings.json when that variable is set, else
+# ~/.claude/settings.json. Run the script once per profile.
+#
 # The statusLine command is written as an absolute path on purpose: Claude Code
 # runs it without your shell profile, so a bare name resolves in a terminal
 # session but not in the desktop app, and the only symptom is an empty line.
@@ -36,14 +40,14 @@ case ":$PATH:" in
     *) echo "note: $BIN_DIR is not on your PATH" >&2 ;;
 esac
 
-SETTINGS="$HOME/.claude/settings.json"
-if command -v python3 >/dev/null 2>&1 && [ -f "$SETTINGS" ]; then
+SETTINGS="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+if command -v python3 >/dev/null 2>&1 && [ -d "$(dirname "$SETTINGS")" ]; then
     TARGET="$TARGET" python3 - "$SETTINGS" <<'PY'
 import json, os, sys
 
 path, target = sys.argv[1], os.environ["TARGET"]
 try:
-    settings = json.load(open(path))
+    settings = json.load(open(path)) if os.path.exists(path) else {}
 except Exception as err:
     sys.exit(f"note: cannot read {path} ({err}); set statusLine by hand")
 

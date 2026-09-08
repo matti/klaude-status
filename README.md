@@ -39,9 +39,12 @@ cd klaude-status
 ```
 
 That builds the release binary, installs it into `~/.local/bin` (override with
-`PREFIX=/usr/local ./install.sh`), and points `statusLine` at it in
-`~/.claude/settings.json`. If a status line is already configured and does not
-mention `klaude-status`, the script leaves it alone and tells you.
+`PREFIX=/usr/local ./install.sh`), and points `statusLine` at it in the
+`settings.json` of the active profile: `$CLAUDE_CONFIG_DIR/settings.json` when
+that variable is set, `~/.claude/settings.json` otherwise. If you switch
+between several profiles, run the script once in each. If a status line is
+already configured and does not mention `klaude-status`, the script leaves it
+alone and tells you.
 
 To wire it up by hand instead:
 
