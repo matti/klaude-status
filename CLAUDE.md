@@ -2,7 +2,7 @@
 
 - Rust binary used as Claude Code's `statusLine` command: reads the statusline JSON on stdin, prints 2 lines with ANSI colors.
 - Runs after every turn (300 ms debounce) + `refreshInterval`. Three hard rules: **no panicking, no subprocesses, no network.** Partial or malformed input produces a partial line, never an error. Completely empty stdin (Claude Code's startup probe) prints nothing at all.
-- The input schema (`src/input.rs`) was read out of the Claude Code 2.1.226 binary, not from documentation. Unknown fields are ignored; conditional fields are `Option`. Field list and how it was extracted: `docs/design.md`.
+- The input schema (`src/input.rs`) was read out of the Claude Code 2.1.226 binary, not from documentation. Unknown fields are ignored; conditional fields are `Option`; a `null` or wrong-typed value degrades that one field to its default (`lenient`), never the whole line. Field list and how it was extracted: `docs/design.md`.
 - Segments (`src/segments.rs`): `path` `git` `session` `model` `effort` `flags` `context` `limits` `cost` `api` `repo` `version`. Each returns `None` when it has nothing to say, and the separator goes with it.
 - Lines are defined in `~/.claude/klaude-status.json` (`lines`, `color`, `max_width`, `bar_width`, `git_timeout_ms`); without the file, `Config::default()` applies. A broken config falls back to the default silently. Reference: `docs/configuration.md`.
 - In a cramped terminal, segments are dropped in `render.rs:DROP_ORDER` order before anything gets truncated. `path` and `model` survive longest.
