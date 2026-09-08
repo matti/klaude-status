@@ -82,7 +82,7 @@ impl Ctx<'_> {
                 }
             };
 
-            match self.root().and_then(|root| relative_to(cwd, root)) {
+            match self.root(cwd) {
                 Some((root, rel)) => {
                     let shown = tilde(root);
                     let name = basename(&shown).to_string();
@@ -140,13 +140,23 @@ impl Ctx<'_> {
         out
     }
 
-    /// The directory that carries the project's name: the repository's main
-    /// working tree, or the project directory when there is no git.
-    fn root(&self) -> Option<&str> {
-        self.git
-            .as_ref()
-            .and_then(|g| g.root.as_deref())
-            .or_else(|| self.input.project_dir())
+    /// The directory that carries the project's name, and `cwd` relative to
+    /// it. Candidates in order of how well they name the project: the
+    /// repository's main working tree, the project directory, and finally the
+    /// working tree the session actually sits in. Only a candidate that
+    /// contains `cwd` counts: a linked worktree outside the main checkout is not
+    /// under the main root, and collapsing around a root the path never passes
+    /// through would lose the repository's name entirely.
+    fn root<'a>(&'a self, cwd: &'a str) -> Option<(&'a str, &'a str)> {
+        let git = self.git.as_ref();
+        [
+            git.and_then(|g| g.root.as_deref()),
+            self.input.project_dir(),
+            git.and_then(|g| g.workdir.as_deref()),
+        ]
+        .into_iter()
+        .flatten()
+        .find_map(|root| relative_to(cwd, root))
     }
 
     fn git_status(&self) -> Option<String> {
@@ -598,16 +608,86 @@ mod tests {
     }
 
     fn variants(json: &str) -> Vec<String> {
+        variants_with_git(json, None)
+    }
+
+    fn variants_with_git(json: &str, git: Option<GitInfo>) -> Vec<String> {
         let input: Input = serde_json::from_str(json).unwrap();
         let cfg = Config::default();
         let ctx = Ctx {
             input: &input,
-            git: None,
+            git,
             p: Painter::new(false),
             cfg: &cfg,
             now: 0,
         };
         ctx.path_variants()
+    }
+
+    /// A linked worktree inside the main checkout collapses around the
+    /// repository's name, which the main working tree carries.
+    #[test]
+    fn a_worktree_inside_the_repo_keeps_the_repo_name() {
+        let git = GitInfo {
+            root: Some("/home/u/dev/acme/data-pipeline".into()),
+            workdir: Some("/home/u/dev/acme/data-pipeline/.worktrees/smoke".into()),
+            ..GitInfo::default()
+        };
+        assert_eq!(
+            variants_with_git(
+                r#"{"workspace":{"current_dir":"/home/u/dev/acme/data-pipeline/.worktrees/smoke/src",
+                                 "project_dir":"/home/u/dev/acme/data-pipeline/.worktrees/smoke"}}"#,
+                Some(git)
+            ),
+            vec![
+                "/home/u/dev/acme/data-pipeline/.worktrees/smoke/src",
+                "…data-pipeline/.worktrees/smoke/src",
+                "…data-pipeline/…/src",
+            ]
+        );
+    }
+
+    /// A linked worktree *outside* the main checkout is not under the main
+    /// root, so the path must collapse around a directory it actually passes
+    /// through: the project directory, or the worktree itself.
+    #[test]
+    fn a_worktree_outside_the_repo_collapses_around_its_own_root() {
+        let git = GitInfo {
+            root: Some("/home/u/dev/acme/data-pipeline".into()),
+            workdir: Some("/tmp/wt/data-pipeline".into()),
+            ..GitInfo::default()
+        };
+        assert_eq!(
+            variants_with_git(
+                r#"{"workspace":{"current_dir":"/tmp/wt/data-pipeline/src",
+                                 "project_dir":"/tmp/wt/data-pipeline"}}"#,
+                Some(git)
+            ),
+            vec![
+                "/tmp/wt/data-pipeline/src",
+                "…data-pipeline/src",
+                "…data-pipeline/…/src",
+            ]
+        );
+        // No usable project_dir either: the worktree's own directory is the
+        // last thing that still contains cwd, and it beats a bare basename.
+        let git = GitInfo {
+            root: Some("/home/u/dev/acme/data-pipeline".into()),
+            workdir: Some("/tmp/wt/fix-retries".into()),
+            ..GitInfo::default()
+        };
+        assert_eq!(
+            variants_with_git(
+                r#"{"workspace":{"current_dir":"/tmp/wt/fix-retries/src",
+                                 "project_dir":"/elsewhere"}}"#,
+                Some(git)
+            ),
+            vec![
+                "/tmp/wt/fix-retries/src",
+                "…fix-retries/src",
+                "…fix-retries/…/src",
+            ]
+        );
     }
 
     /// An added directory is named while there is room for it, and collapses to
