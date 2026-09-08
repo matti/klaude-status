@@ -18,7 +18,7 @@ mod render;
 mod segments;
 mod style;
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -40,8 +40,17 @@ fn main() {
     let line = respond(&raw, &cfg, cfg.width_limit(terminal_width()));
     log_run(&raw, line.as_deref().unwrap_or(""));
     if let Some(line) = line {
-        println!("{line}");
+        emit(&line);
     }
+}
+
+/// Write one line to stdout and ignore a failed write. The rule is no
+/// panicking: when the reader closes the pipe before we print, `println!`
+/// would abort with "failed printing to stdout: Broken pipe".
+fn emit(text: &str) {
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{text}");
+    let _ = out.flush();
 }
 
 /// Raw stdin to printable output, or `None` for no output at all: Claude Code
@@ -65,7 +74,6 @@ fn log_run(raw: &str, line: &str) {
     let Some(path) = std::env::var_os("KLAUDE_STATUS_LOG") else {
         return;
     };
-    use std::io::Write;
     let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -176,9 +184,9 @@ fn demo() {
                 window.resets_at += now;
             }
         }
-        println!("\x1b[1m{title}\x1b[0m");
-        println!("{}", build(&input, &cfg, cfg.width_limit(None)));
-        println!();
+        emit(&format!("\x1b[1m{title}\x1b[0m"));
+        emit(&build(&input, &cfg, cfg.width_limit(None)));
+        emit("");
     }
 }
 
